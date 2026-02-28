@@ -1,192 +1,12 @@
 # Claude Code Notifier
 
-macOS desktop notifications for [Claude Code](https://docs.anthropic.com/en/docs/claude-code). Know when Claude finishes or needs your attention — without watching the terminal.
-
-[中文文档](#中文文档)
+macOS 和 Windows 桌面通知工具，适配 [Claude Code](https://docs.anthropic.com/en/docs/claude-code)。无需盯着终端，Claude 完成或需要你操作时自动弹窗提醒。
 
 <p align="center">
-  <img src="assets/notify-complete.png" width="360" alt="Task complete notification" />
+  <img src="assets/notify-complete.png" width="360" alt="任务完成通知" />
   &nbsp;&nbsp;
-  <img src="assets/notify-waiting.png" width="360" alt="Waiting for input notification" />
+  <img src="assets/notify-waiting.png" width="360" alt="等待操作通知" />
 </p>
-
-## Background
-
-Claude Code is a terminal-based AI coding assistant. When you assign it a task, it runs autonomously — sometimes for seconds, sometimes for minutes.
-
-**The problem:** There's no built-in way to know when Claude finishes or needs your input. You either stare at the terminal waiting, or context-switch and miss the moment Claude is done. Both waste your time.
-
-**The solution:** This tool uses Claude Code's [Hooks](https://docs.anthropic.com/en/docs/claude-code/hooks) system to send macOS native desktop notifications with sound alerts. The notification subtitle shows an AI-generated session summary so you can tell *which* task finished at a glance — especially useful when running multiple sessions.
-
-**The result:** You get a notification the instant Claude is done. Switch to another app, grab a coffee, work on something else — the notification will find you.
-
-## Features
-
-- **✅ Complete** — Notification + sound when Claude finishes responding
-- **⏳ Waiting** — Notification + sound when Claude needs permission or user input
-- **AI Session Summary** — Auto-summarizes the first message via claude-3-haiku into a short title, so you know which task at a glance
-- **Local Fallback** — Falls back to local keyword extraction when API is unavailable
-- **Caching** — AI is called only once per session; subsequent notifications are instant
-
-## Notification Events
-
-This tool listens to 2 hook events. Claude Code supports more — you can extend it to cover others:
-
-| Hook Event | Title | Sound | When |
-|---|---|---|---|
-| `Stop` | ✅ Complete | Hero | Claude finished responding |
-| `Notification` | ⏳ Waiting | Sosumi | Claude needs permission or user input |
-
-### All Available Claude Code Hook Events
-
-You can add more events by editing `notify.py` and `~/.claude/settings.json`. Here's the full list:
-
-| Hook Event | Description | Suggested Sound |
-|---|---|---|
-| `Stop` | Claude finished responding | Hero (triumphant) |
-| `Notification` | Needs permission / waiting for input | Sosumi (alert) |
-| `SubagentStop` | Sub-agent completed | Ping (subtle) |
-| `PreToolUse` | Before tool call (e.g., Bash, Write) | Tink (light tap) |
-| `PostToolUse` | After tool call | Pop (quick) |
-| `SessionStart` | New session started | Blow (start-up) |
-| `PreCompact` | Before context compaction | Submarine (low) |
-| `UserPromptSubmit` | User submitted input | — (usually silent) |
-
-### macOS System Sounds Reference
-
-All available sounds in `/System/Library/Sounds/`:
-
-| Sound | Style | Best For |
-|---|---|---|
-| `Hero` | Triumphant, uplifting | Task completion |
-| `Sosumi` | Classic Mac alert, distinctive | Attention needed |
-| `Funk` | Short, punchy | Errors or warnings |
-| `Basso` | Deep, serious | Critical errors |
-| `Glass` | Gentle, clear | Subtle notifications |
-| `Ping` | Quick, clean | Minor updates |
-| `Pop` | Soft, bubbly | Tool completion |
-| `Tink` | Light tap | Background events |
-| `Blow` | Airy, soft | Session start |
-| `Bottle` | Hollow, watery | Neutral events |
-| `Frog` | Quirky croak | Fun/custom use |
-| `Morse` | Rhythmic beep | Repeated events |
-| `Purr` | Soft vibration | Gentle reminders |
-| `Submarine` | Low sonar ping | System events |
-
-## Requirements
-
-- **macOS** (uses `osascript` for native notifications)
-- **Python 3.6+**
-- **Claude Code** installed and configured
-
-## Installation
-
-```bash
-git clone https://github.com/yike-gunshi/claude-code-notifier.git
-cd claude-code-notifier
-bash install.sh
-```
-
-Restart Claude Code after installation.
-
-### Optional: Enable AI Session Summary
-
-Install the Anthropic Python SDK to enable AI-powered session name summaries:
-
-```bash
-pip install anthropic
-```
-
-The notifier will use your existing Claude Code API credentials (`ANTHROPIC_API_KEY` or `ANTHROPIC_AUTH_TOKEN`) automatically. If unavailable, it falls back to local keyword extraction.
-
-## How It Works
-
-```
-Claude Code Hook (stdin JSON)
-        │
-        ▼
-   notify.sh (entry point)
-        │
-        ▼
-   notify.py
-        │
-        ├── Read session transcript
-        │       │
-        │       ▼
-        ├── AI Summary (claude-3-haiku)
-        │   or Local keyword extraction
-        │       │
-        │       ▼
-        ├── Cache summary (~/.cache/claude-code-notifier/)
-        │
-        ▼
-   macOS Notification + Sound
-```
-
-1. Claude Code triggers the hook with JSON via stdin (contains `session_id`, `transcript_path`, `last_assistant_message`, etc.)
-2. The script reads the first user message from the session transcript
-3. Generates a short summary (AI or local fallback) and caches it per session
-4. Sends a macOS native notification with the summary as subtitle
-
-## Configuration
-
-### Change Notification Sounds
-
-Edit `notify.py` and modify the `sound` values in the `main()` function.
-
-### Manual Hook Configuration
-
-If you prefer to configure hooks manually, add this to `~/.claude/settings.json`:
-
-```json
-{
-  "hooks": {
-    "Stop": [
-      {
-        "hooks": [
-          { "command": "/path/to/claude-code-notifier/notify.sh", "type": "command" }
-        ],
-        "matcher": ".*"
-      }
-    ],
-    "Notification": [
-      {
-        "hooks": [
-          { "command": "/path/to/claude-code-notifier/notify.sh", "type": "command" }
-        ],
-        "matcher": ".*"
-      }
-    ]
-  }
-}
-```
-
-## Uninstall
-
-```bash
-cd claude-code-notifier
-bash uninstall.sh
-```
-
-## Related Projects
-
-If you need more advanced audio hooks or cross-platform support, check out these projects:
-
-- [ctoth/claudio](https://github.com/ctoth/claudio) — Go-based audio plugin with soundpacks and contextual sounds per tool event
-- [wyattjoh/claude-code-notification](https://github.com/wyattjoh/claude-code-notification) — Lightweight macOS notification hook with customizable sounds
-- [shanraisshan/claude-code-voice-hooks](https://github.com/shanraisshan/claude-code-voice-hooks) — Ding/dong sounds on tool use events
-- [farouqaldori/claude-island](https://github.com/farouqaldori/claude-island) — macOS menu bar session manager with notifications
-- [soulee-dev/claude-code-notify-powershell](https://github.com/soulee-dev/claude-code-notify-powershell) — Windows PowerShell toast notifications
-
-## License
-
-MIT
-
----
-
-# 中文文档
-
-macOS 桌面通知工具，适配 [Claude Code](https://docs.anthropic.com/en/docs/claude-code)。无需盯着终端，Claude 完成或需要你操作时自动弹窗提醒。
 
 ## 背景
 
@@ -194,7 +14,7 @@ Claude Code 是一个基于终端的 AI 编程助手。当你给它分配任务�
 
 **问题：** Claude Code 没有内置的完成提示音。你要么一直盯着终端等，要么切换到其他工作后错过 Claude 完成的时机。两种方式都浪费时间。
 
-**解决方案：** 利用 Claude Code 的 [Hooks](https://docs.anthropic.com/en/docs/claude-code/hooks) 机制，在任务完成或需要操作时发送 macOS 原生桌面通知 + 提示音。通知副标题会显示 AI 生成的会话摘要，一眼就能看出是哪个任务——多会话并行时尤其有用。
+**解决方案：** 利用 Claude Code 的 [Hooks](https://docs.anthropic.com/en/docs/claude-code/hooks) 机制，在任务完成或需要操作时发送原生桌面通知 + 提示音。macOS 使用 `osascript`，Windows 使用注册 App ID 的 PowerShell toast 通知，支持操作中心（Action Center）完整显示。通知副标题会显示 AI 生成的会话摘要，一眼就能看出是哪个任务——多会话并行时尤其有用。
 
 **效果：** Claude 完成的瞬间你就会收到通知。切换到其他 App、喝杯咖啡、做别的事情——通知会找到你。
 
@@ -205,15 +25,16 @@ Claude Code 是一个基于终端的 AI 编程助手。当你给它分配任务�
 - **AI 会话摘要** — 自动调用 claude-3-haiku 将首条消息总结为短标题，一眼看出是哪个任务
 - **本地 fallback** — 没有 API 时自动切换到本地关键词提取，不依赖网络
 - **缓存机制** — 每个 session 只调一次 AI，后续通知瞬间触发
+- **点击跳转** — Windows 下点击通知自动跳转到对应项目的 Cursor/终端窗口
 
 ## 通知事件
 
 本工具监听 2 个 Hook 事件。Claude Code 还支持更多，你可以自行扩展：
 
-| Hook 事件 | 标题 | 声音 | 触发时机 |
-|---|---|---|---|
-| `Stop` | ✅ 已完成 | Hero | Claude 完成回复 |
-| `Notification` | ⏳ 等待操作 | Sosumi | Claude 需要权限或等待输入 |
+| Hook 事件 | 标题 | macOS 声音 | Windows 声音 | 触发时机 |
+|---|---|---|---|---|
+| `Stop` | ✅ 已完成 | Hero | Windows Notify System Generic | Claude 完成回复 |
+| `Notification` | ⏳ 等待操作 | Sosumi | Windows Notify Calendar | Claude 需要权限或等待输入 |
 
 ### 所有可用的 Claude Code Hook 事件
 
@@ -251,12 +72,44 @@ Claude Code 是一个基于终端的 AI 编程助手。当你给它分配任务�
 | `Purr` | 轻微振动 | 温和提醒 |
 | `Submarine` | 低频声纳 | 系统事件 |
 
+### Windows 系统声音参考
+
+`C:\Windows\Media\` 下可用声音，可在 `notify.py` 的 `WINDOWS_SOUNDS` 字典中修改映射：
+
+| 声音 | 风格 | 适合场景 |
+|---|---|---|
+| `Windows Notify System Generic` | 干净、现代 | 任务完成（Stop 默认） |
+| `Windows Notify Calendar` | 柔和铃声 | 需要注意（Notification 默认） |
+| `Windows Notify Email` | 简短、清晰 | 次要更新 |
+| `Windows Notify Messaging` | 快速提示 | 消息通知 |
+| `Windows Critical Stop` | 紧急感 | 严重错误 |
+| `Windows Exclamation` | 警告音 | 警告 |
+| `Windows Hardware Insert` | 上升音调 | 会话开始 |
+| `chimes` | 经典铃声 | 通用通知 |
+| `notify` | 标准通知音 | 中性事件 |
+
+## 系统要求
+
+- **macOS** 或 **Windows 10/11**
+- **Python 3.6+**
+- **Claude Code** 已安装并配置
+
 ## 安装
+
+### macOS
 
 ```bash
 git clone https://github.com/yike-gunshi/claude-code-notifier.git
 cd claude-code-notifier
 bash install.sh
+```
+
+### Windows
+
+```powershell
+git clone https://github.com/yike-gunshi/claude-code-notifier.git
+cd claude-code-notifier
+powershell -ExecutionPolicy Bypass -File install.ps1
 ```
 
 安装后重启 Claude Code 即可生效。
@@ -271,11 +124,85 @@ pip install anthropic
 
 会自动使用你现有的 Claude Code API 凭证（`ANTHROPIC_API_KEY` 或 `ANTHROPIC_AUTH_TOKEN`）。如不可用，自动回退到本地关键词提取。
 
+## 工作原理
+
+```
+Claude Code Hook (stdin JSON)
+        │
+        ▼
+   notify.sh (入口)
+        │
+        ▼
+   notify.py
+        │
+        ├── 读取会话 transcript
+        │       │
+        │       ▼
+        ├── AI 摘要 (claude-3-haiku)
+        │   或 本地关键词提取
+        │       │
+        │       ▼
+        ├── 缓存摘要
+        │   macOS: ~/.cache/claude-code-notifier/
+        │   Windows: %LOCALAPPDATA%\claude-code-notifier\
+        │
+        ▼
+   桌面通知 + 提示音
+   macOS: osascript  │  Windows: PowerShell toast (注册 App ID)
+```
+
+1. Claude Code 通过 stdin 传入 JSON（包含 `session_id`、`transcript_path`、`last_assistant_message` 等）
+2. 脚本读取会话 transcript 中的首条用户消息
+3. 生成短摘要（AI 或本地 fallback）并按 session 缓存
+4. 发送原生桌面通知，摘要作为副标题显示
+
+## 配置
+
+### 修改通知声音
+
+编辑 `notify.py`，修改 `main()` 函数中的 `sound` 值。
+
+### 手动配置 Hook
+
+如果你想手动配置，在 `~/.claude/settings.json` 中添加：
+
+```json
+{
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          { "command": "/path/to/claude-code-notifier/notify.sh", "type": "command" }
+        ],
+        "matcher": ".*"
+      }
+    ],
+    "Notification": [
+      {
+        "hooks": [
+          { "command": "/path/to/claude-code-notifier/notify.sh", "type": "command" }
+        ],
+        "matcher": ".*"
+      }
+    ]
+  }
+}
+```
+
 ## 卸载
+
+### macOS
 
 ```bash
 cd claude-code-notifier
 bash uninstall.sh
+```
+
+### Windows
+
+```powershell
+cd claude-code-notifier
+powershell -ExecutionPolicy Bypass -File uninstall.ps1
 ```
 
 ## 相关项目
@@ -287,3 +214,7 @@ bash uninstall.sh
 - [shanraisshan/claude-code-voice-hooks](https://github.com/shanraisshan/claude-code-voice-hooks) — 工具使用时播放 ding/dong 声音
 - [farouqaldori/claude-island](https://github.com/farouqaldori/claude-island) — macOS 菜单栏会话管理器，带通知功能
 - [soulee-dev/claude-code-notify-powershell](https://github.com/soulee-dev/claude-code-notify-powershell) — Windows PowerShell toast 通知
+
+## License
+
+MIT

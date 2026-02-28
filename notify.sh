@@ -7,14 +7,14 @@ export HOOK_INPUT=$(cat)
 # Resolve script directory
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
-# Auto-detect Python 3
-if command -v python3 &>/dev/null; then
-    PYTHON=python3
-elif command -v python &>/dev/null; then
+# Auto-detect Python 3 (prefer 'python' / 'py -3' on Windows to avoid Store stub)
+if command -v python &>/dev/null && python --version 2>&1 | grep -q "Python 3"; then
     PYTHON=python
+elif command -v py &>/dev/null; then
+    PYTHON="py -3"
+elif command -v python3 &>/dev/null; then
+    PYTHON=python3
 else
-    # Fallback: basic notification without AI summary
-    osascript -e 'display notification "Claude Code needs attention" with title "Claude Code" sound name "Hero"'
     exit 0
 fi
 

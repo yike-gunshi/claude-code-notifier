@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """
-Claude Code Notifier - macOS desktop notification hook with AI session summary.
+Claude Code Notifier - desktop notification hook with AI session summary.
+Supports macOS (osascript) and Windows (PowerShell toast).
 
 Triggers on:
   - Stop: Claude finished responding
@@ -88,7 +89,10 @@ def summarize_locally(text):
 
 def get_session_name(transcript, session_id, cwd):
     """Get a short session name: cache -> AI summary -> local extraction -> dir name."""
-    cache_dir = os.path.expanduser("~/.cache/claude-code-notifier")
+    if sys.platform == "win32":
+        cache_dir = os.path.join(os.environ.get("LOCALAPPDATA", os.path.expanduser("~")), "claude-code-notifier")
+    else:
+        cache_dir = os.path.expanduser("~/.cache/claude-code-notifier")
     os.makedirs(cache_dir, exist_ok=True)
     cache_file = os.path.join(cache_dir, session_id) if session_id else ""
 
@@ -130,9 +134,137 @@ def get_session_name(transcript, session_id, cwd):
     return session_name or os.path.basename(cwd)
 
 
-def send_notification(title, subtitle, body, sound):
+def get_terminal_pid():
+    """Walk up the process tree to find the terminal window PID (Windows only)."""
+    if sys.platform != "win32":
+        return None
+    try:
+        import ctypes
+        import ctypes.wintypes
+
+        ntdll = ctypes.windll.ntdll
+        kernel32 = ctypes.windll.kernel32
+        user32 = ctypes.windll.user32
+
+        PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+
+        class PROCESS_BASIC_INFORMATION(ctypes.Structure):
+            _fields_ = [
+                ("Reserved1", ctypes.c_void_p),
+                ("PebBaseAddress", ctypes.c_void_p),
+                ("Reserved2", ctypes.c_void_p * 2),
+                ("UniqueProcessId", ctypes.POINTER(ctypes.c_ulong)),
+                ("InheritedFromUniqueProcessId", ctypes.POINTER(ctypes.c_ulong)),
+            ]
+
+        WNDENUMPROC = ctypes.WINFUNCTYPE(
+            ctypes.wintypes.BOOL, ctypes.wintypes.HWND, ctypes.wintypes.LPARAM
+        )
+
+        def pid_has_visible_window(pid):
+            found = [False]
+            def callback(hwnd, _lparam):
+                if user32.IsWindowVisible(hwnd):
+                    wpid = ctypes.wintypes.DWORD()
+                    user32.GetWindowThreadProcessId(hwnd, ctypes.byref(wpid))
+                    if wpid.value == pid and user32.GetWindowTextLengthW(hwnd) > 0:
+                        found[0] = True
+                        return False
+                return True
+            user32.EnumWindows(WNDENUMPROC(callback), 0)
+            return found[0]
+
+        def get_parent_pid(pid):
+            handle = kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+            if not handle:
+                return None
+            try:
+                pbi = PROCESS_BASIC_INFORMATION()
+                status = ntdll.NtQueryInformationProcess(
+                    handle, 0, ctypes.byref(pbi), ctypes.sizeof(pbi), None
+                )
+                if status == 0:
+                    return ctypes.cast(
+                        pbi.InheritedFromUniqueProcessId, ctypes.c_void_p
+                    ).value
+                return None
+            finally:
+                kernel32.CloseHandle(handle)
+
+        pid = os.getpid()
+        visited = set()
+        ancestors = []
+
+        while pid and pid > 4 and pid not in visited:
+            visited.add(pid)
+            ancestors.append(pid)
+            parent = get_parent_pid(pid)
+            if parent is None or parent <= 4:
+                break
+            pid = parent
+
+        # Return closest ancestor (from current process upward) that owns a visible window
+        for p in ancestors[1:]:
+            if pid_has_visible_window(p):
+                return p
+
+        return ancestors[-1] if ancestors else None
+    except Exception:
+        return None
+
+
+def ensure_protocol_handler():
+    """Register claude-code-notifier:// protocol handler in the Windows registry if missing."""
+    if sys.platform != "win32":
+        return
+    try:
+        import winreg
+        key_path = r"Software\Classes\claude-code-notifier"
+        try:
+            winreg.OpenKey(winreg.HKEY_CURRENT_USER, key_path + r"\shell\open\command")
+            return  # already registered
+        except FileNotFoundError:
+            pass
+
+        # Find pythonw.exe
+        pythonw = os.path.join(os.path.dirname(sys.executable), "pythonw.exe")
+        if not os.path.exists(pythonw):
+            pythonw = sys.executable
+
+        activate_script = os.path.join(os.path.dirname(os.path.abspath(__file__)), "activate_window.py")
+        if not os.path.exists(activate_script):
+            return
+
+        command = f'"{pythonw}" "{activate_script}" "%1"'
+
+        key = winreg.CreateKey(winreg.HKEY_CURRENT_USER, key_path)
+        winreg.SetValueEx(key, "", 0, winreg.REG_SZ, "URL:claude-code-notifier Protocol")
+        winreg.SetValueEx(key, "URL Protocol", 0, winreg.REG_SZ, "")
+        winreg.CloseKey(key)
+
+        cmd_key = winreg.CreateKey(winreg.HKEY_CURRENT_USER, key_path + r"\shell\open\command")
+        winreg.SetValueEx(cmd_key, "", 0, winreg.REG_SZ, command)
+        winreg.CloseKey(cmd_key)
+    except Exception:
+        pass
+
+
+WINDOWS_SOUNDS = {
+    "Hero": r"C:\Windows\Media\Windows Notify System Generic.wav",
+    "Sosumi": r"C:\Windows\Media\Windows Notify Calendar.wav",
+}
+
+
+def send_notification(title, subtitle, body, sound, terminal_pid=None, cwd=""):
+    """Send a desktop notification with sound (macOS or Windows)."""
+    if sys.platform == "win32":
+        _send_windows_notification(title, subtitle, body, sound, terminal_pid, cwd)
+    else:
+        _send_macos_notification(title, subtitle, body, sound)
+
+
+def _send_macos_notification(title, subtitle, body, sound):
     """Send a macOS desktop notification with sound."""
-    # Escape double quotes for AppleScript
     body = body.replace('"', '\\"')
     subtitle = subtitle.replace('"', '\\"')
     script = (
@@ -144,12 +276,68 @@ def send_notification(title, subtitle, body, sound):
     subprocess.run(["osascript", "-e", script], capture_output=True)
 
 
+def _send_windows_notification(title, subtitle, body, sound, terminal_pid=None, cwd=""):
+    """Send a Windows toast notification with sound."""
+    sound_path = WINDOWS_SOUNDS.get(sound, "")
+    # Play sound in background
+    if sound_path and os.path.exists(sound_path):
+        ps_sound = (
+            f"(New-Object System.Media.SoundPlayer '{sound_path}').PlaySync()"
+        )
+        subprocess.Popen(
+            ["powershell", "-NoProfile", "-Command", ps_sound],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        )
+    # Send toast notification via PowerShell with registered App ID
+    display_body = f"{subtitle}\n{body}" if subtitle else body
+    title = title.replace("'", "''")
+    display_body = display_body.replace("'", "''")
+    # Build launch attribute for click-to-activate
+    if terminal_pid:
+        from urllib.parse import quote
+        cwd_encoded = quote(cwd, safe="") if cwd else ""
+        launch_attr = f' activationType="protocol" launch="claude-code-notifier://activate?pid={terminal_pid}&amp;cwd={cwd_encoded}"'
+    else:
+        launch_attr = ''
+    ps_toast = f"""
+$appId = 'Claude.Code.Notifier'
+$regPath = 'HKCU:\\Software\\Classes\\AppUserModelId\\' + $appId
+if (-not (Test-Path $regPath)) {{
+    New-Item -Path $regPath -Force | Out-Null
+    New-ItemProperty -Path $regPath -Name 'DisplayName' -Value 'Claude Code' -PropertyType String -Force | Out-Null
+}}
+[Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime] | Out-Null
+[Windows.Data.Xml.Dom.XmlDocument, Windows.Data.Xml.Dom, ContentType = WindowsRuntime] | Out-Null
+$xml = @'
+<toast duration="long"{launch_attr}>
+  <visual>
+    <binding template="ToastGeneric">
+      <text>{title}</text>
+      <text>{display_body}</text>
+    </binding>
+  </visual>
+</toast>
+'@
+$doc = New-Object Windows.Data.Xml.Dom.XmlDocument
+$doc.LoadXml($xml)
+$toast = [Windows.UI.Notifications.ToastNotification]::new($doc)
+[Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier($appId).Show($toast)
+"""
+    subprocess.run(
+        ["powershell", "-NoProfile", "-Command", ps_toast],
+        capture_output=True,
+    )
+
+
 def main():
     data = json.loads(os.environ.get("HOOK_INPUT", "{}"))
     event = data.get("hook_event_name", "")
 
     if event not in ("Stop", "Notification"):
         sys.exit(0)
+
+    if sys.platform == "win32":
+        ensure_protocol_handler()
 
     cwd = data.get("cwd", "")
     session_id = data.get("session_id", "")
@@ -158,20 +346,25 @@ def main():
     notif_msg = data.get("message", "").replace('"', "").replace("\n", " ")
 
     session_name = get_session_name(transcript, session_id, cwd)
+    terminal_pid = get_terminal_pid()
 
     if event == "Stop":
         send_notification(
             title="✅ 已完成",
             subtitle=session_name,
             body=last_msg or "回复已完成",
-            sound="Hero"
+            sound="Hero",
+            terminal_pid=terminal_pid,
+            cwd=cwd,
         )
     else:
         send_notification(
             title="⏳ 等待操作",
             subtitle=session_name,
             body=notif_msg or "需要你的输入",
-            sound="Sosumi"
+            sound="Sosumi",
+            terminal_pid=terminal_pid,
+            cwd=cwd,
         )
 
 
