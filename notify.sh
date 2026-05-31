@@ -2,7 +2,9 @@
 # Claude Code Notifier - hook entry point
 # Reads JSON from stdin and delegates to notify.py
 
-export HOOK_INPUT=$(cat)
+# Use head -n 1 instead of cat: in async hooks on Windows,
+# the stdin pipe may not close promptly, causing cat to block forever.
+export HOOK_INPUT=$(head -n 1)
 
 # Resolve script directory
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
