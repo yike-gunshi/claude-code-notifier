@@ -14,7 +14,9 @@ elif command -v python &>/dev/null; then
     PYTHON=python
 else
     # Fallback: basic notification without AI summary
-    osascript -e 'display notification "Claude Code needs attention" with title "Claude Code" sound name "Hero"'
+    if command -v msg &>/dev/null; then
+        msg "*" "Claude Code needs your attention"
+    fi
     exit 0
 fi
 

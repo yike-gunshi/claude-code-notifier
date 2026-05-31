@@ -1,10 +1,14 @@
 #!/usr/bin/env python3
 """
-Claude Code Notifier - macOS desktop notification hook with AI session summary.
+Claude Code Notifier — cross-platform desktop notification hook with AI session summary.
 
 Triggers on:
   - Stop: Claude finished responding
   - Notification: Claude needs user input or permission
+
+Platforms:
+  - Windows 10/11: winotify (native toast API)
+  - macOS: osascript (via notify.sh fallback)
 """
 
 import json
@@ -131,17 +135,36 @@ def get_session_name(transcript, session_id, cwd):
 
 
 def send_notification(title, subtitle, body, sound):
-    """Send a macOS desktop notification with sound."""
-    # Escape double quotes for AppleScript
-    body = body.replace('"', '\\"')
-    subtitle = subtitle.replace('"', '\\"')
-    script = (
-        f'display notification "{body}" '
-        f'with title "{title}" '
-        f'subtitle "{subtitle}" '
-        f'sound name "{sound}"'
-    )
-    subprocess.run(["osascript", "-e", script], capture_output=True)
+    """Send a Windows desktop notification via winotify (native Win10/11 toast API).
+
+    Uses winotify instead of System.Windows.Forms.NotifyIcon balloon tips,
+    which are suppressed on modern Windows 11.
+    """
+    try:
+        from winotify import Notification
+        import winotify.audio as audio
+
+        full_title = f"{title} - {subtitle}"
+        # winotify has a title length limit (~200 chars). Truncate if needed.
+        if len(full_title) > 180:
+            full_title = full_title[:177] + "..."
+
+        n = Notification(
+            app_id="Claude Code",
+            title=full_title,
+            msg=body[:200] if body else "Claude 需要你的关注",
+        )
+        n.set_audio(audio.Default, loop=False)
+        n.show()
+    except Exception:
+        # Last-resort fallback: use msg.exe for a basic popup
+        try:
+            subprocess.run(
+                ["msg", "*", f"{title} - {subtitle}: {body}"],
+                capture_output=True, timeout=5,
+            )
+        except Exception:
+            pass
 
 
 def main():
@@ -164,14 +187,14 @@ def main():
             title="✅ 已完成",
             subtitle=session_name,
             body=last_msg or "回复已完成",
-            sound="Hero"
+            sound=""
         )
     else:
         send_notification(
             title="⏳ 等待操作",
             subtitle=session_name,
             body=notif_msg or "需要你的输入",
-            sound="Sosumi"
+            sound=""
         )
 
 
