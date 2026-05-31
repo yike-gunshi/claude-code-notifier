@@ -2,7 +2,9 @@
 # Claude Code Notifier - hook entry point
 # Reads JSON from stdin and delegates to notify.py
 
-export HOOK_INPUT=$(cat)
+# Use head -n 1 instead of cat: in async hooks on Windows,
+# the stdin pipe may not close promptly, causing cat to block forever.
+export HOOK_INPUT=$(head -n 1)
 
 # Resolve script directory
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -14,7 +16,9 @@ elif command -v python &>/dev/null; then
     PYTHON=python
 else
     # Fallback: basic notification without AI summary
-    osascript -e 'display notification "Claude Code needs attention" with title "Claude Code" sound name "Hero"'
+    if command -v msg &>/dev/null; then
+        msg "*" "Claude Code needs your attention"
+    fi
     exit 0
 fi
 
